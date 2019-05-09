@@ -7,6 +7,7 @@
     using System.Xml;
     using VDS.RDF;
     using VDS.RDF.Parsing;
+    using VDS.RDF.Query;
     using GraphNodeType = VDS.RDF.NodeType;
 
     public partial class Reader : XmlReader
@@ -21,22 +22,71 @@
         private Queue<Reader> listItems;
         private Queue<Triple> collectionTriples;
 
-        public Reader(INode root) :
-            this(root, true, new HashSet<INode>())
+        // TODO: Test
+        public Reader(IGraph g)
+            : this(g.Triples.SubjectNodes)
+        {
+        }
+
+        // TODO: Test
+        public Reader(IGraph g, params Uri[] uris)
+            : this(g, (IEnumerable<Uri>)uris)
+        {
+        }
+
+        // TODO: Test
+        public Reader(IGraph g, IEnumerable<Uri> uris)
+            : this(uris.Select(u => g.GetUriNode(u)))
+        {
+        }
+
+        // TODO: Test
+        public Reader(IGraph g, string query)
+            : this(g, new SparqlQueryParser().ParseFromString(query))
+        {
+        }
+
+        // TODO: Test
+        public Reader(IGraph g, SparqlQuery query)
+            : this(((SparqlResultSet)g.ExecuteQuery(Validate(query))).Select(r => r["root"]))
+        {
+        }
+
+        public Reader(params INode[] roots)
+            : this((IEnumerable<INode>)roots)
+        {
+        }
+
+        public Reader(IEnumerable<INode> roots)
+            : this(roots, true, new HashSet<INode>())
         {
         }
 
         private Reader(INode root, bool rdf, ISet<INode> seen)
+            : this(root.AsEnumerable(), rdf, seen)
         {
+        }
+
+        private Reader(IEnumerable<INode> roots, bool rdf, ISet<INode> seen)
+        {
+            // TODO: Implement
+            var root = roots.Single();
             this.root = root ?? throw new ArgumentNullException(nameof(root));
             this.rdf = rdf;
             this.seen = seen;
+        }
+
+        private static SparqlQuery Validate(SparqlQuery query)
+        {
+            // TODO: Validate
+            return query;
         }
 
         private Triple Predicate => predicateTriples.Peek();
 
         private Reader ListItem => listItems.Peek();
 
+        // TODO: Finish xml:base
         public override string BaseURI => "urn:";
 
         // TODO: Implement
@@ -659,6 +709,7 @@
 
         public override bool EOF => throw new NotImplementedException();
 
+        // TODO: Implement
         public override XmlNameTable NameTable => throw new NotImplementedException();
 
         public override string GetAttribute(int i) => throw new NotImplementedException();
