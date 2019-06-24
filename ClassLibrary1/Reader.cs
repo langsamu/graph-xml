@@ -12,12 +12,12 @@
 
     public partial class Reader : XmlReader
     {
-        private readonly INode root;
         private readonly bool rdf;
         private readonly ISet<INode> seen;
         private ReaderState state;
 
         private Reader @object;
+        private Queue<INode> subjects;
         private Queue<Triple> predicateTriples;
         private Queue<Reader> listItems;
         private Queue<Triple> collectionTriples;
@@ -55,6 +55,10 @@
         public Reader(params INode[] roots)
             : this((IEnumerable<INode>)roots)
         {
+            if (roots.Any(r => r is null))
+            {
+                throw new ArgumentNullException(nameof(roots));
+            }
         }
 
         public Reader(IEnumerable<INode> roots)
@@ -69,9 +73,7 @@
 
         private Reader(IEnumerable<INode> roots, bool rdf, ISet<INode> seen)
         {
-            // TODO: Implement
-            var root = roots.Single();
-            this.root = root ?? throw new ArgumentNullException(nameof(root));
+            this.subjects = new Queue<INode>(roots);
             this.rdf = rdf;
             this.seen = seen;
         }
@@ -81,6 +83,8 @@
             // TODO: Validate
             return query;
         }
+
+        private INode Subject => subjects.Peek();
 
         private Triple Predicate => predicateTriples.Peek();
 
@@ -106,7 +110,7 @@
                         return ListItem.IsEmptyElement;
 
                     case ReaderState.Subject:
-                        return seen.Contains(root) || !root.Graph.GetTriplesWithSubject(root).Any();
+                        return seen.Contains(Subject) || !Subject.Graph.GetTriplesWithSubject(Subject).Any();
 
                     default:
                         return false;
@@ -291,7 +295,7 @@
                         return "xml";
 
                     case ReaderState.Predicate:
-                        if (root.Graph.NamespaceMap.ReduceToQName(((IUriNode)Predicate.Predicate).Uri.AbsoluteUri, out var qname))
+                        if (Subject.Graph.NamespaceMap.ReduceToQName(((IUriNode)Predicate.Predicate).Uri.AbsoluteUri, out var qname))
                         {
                             return qname.Substring(0, qname.IndexOf(':'));
                         }
@@ -331,13 +335,13 @@
                         return ListItem.Value;
 
                     case ReaderState.Literal:
-                        return ((ILiteralNode)root).Value;
+                        return ((ILiteralNode)Subject).Value;
 
                     case ReaderState.AboutValue:
-                        return root.ToString();
+                        return Subject.ToString();
 
                     case ReaderState.NodeIdValue:
-                        return ((IBlankNode)root).InternalID;
+                        return ((IBlankNode)Subject).InternalID;
 
                     case ReaderState.ParseTypeValue:
                         return "Collection";
@@ -349,7 +353,7 @@
                         return ((ILiteralNode)Predicate.Object).Language;
 
                     case ReaderState.PrefixValue:
-                        return root.Graph.NamespaceMap.GetNamespaceUri(prefixes.Peek()).AbsoluteUri;
+                        return Subject.Graph.NamespaceMap.GetNamespaceUri(prefixes.Peek()).AbsoluteUri;
 
                     default:
                         throw new Exception(state.ToString());
@@ -370,16 +374,21 @@
                     goto case ReaderState.RDF;
 
                 case ReaderState.RDF:
-                    if (root.NodeType == GraphNodeType.Literal)
+                    if (!subjects.Any())
+                    {
+                        return false;
+                    }
+
+                    if (Subject.NodeType == GraphNodeType.Literal)
                     {
                         return TransitionTo(ReaderState.Literal);
                     }
 
-                    if (root.IsListRoot(root.Graph) && !root.Graph.GetListItems(root).Any(i => i.NodeType == GraphNodeType.Literal))
+                    if (Subject.IsListRoot(Subject.Graph) && !Subject.Graph.GetListItems(Subject).Any(i => i.NodeType == GraphNodeType.Literal))
                     {
                         listItems = new Queue<Reader>();
 
-                        foreach (var item in root.Graph.GetListItems(root))
+                        foreach (var item in Subject.Graph.GetListItems(Subject))
                         {
                             var listReader = new Reader(item, false, seen);
                             listReader.Read();
@@ -405,19 +414,21 @@
                     return listItems.Any();
 
                 case ReaderState.Subject:
-                    if (!seen.Add(root) || !root.Graph.GetTriplesWithSubject(root).Any())
+                    // TODO: must output node id if subject is predicate that's used elsewhere (see e.g. rdfms-syntax-incomplete-test-001 in test-suite)
+
+                    if (!seen.Add(Subject) || !Subject.Graph.GetTriplesWithSubject(Subject).Any())
                     {
                         goto case ReaderState.EndSubject;
                     }
 
                     collectionTriples = new Queue<Triple>(
-                        from t in root.Graph.GetTriplesWithSubject(root)
-                        where t.Object.IsListRoot(root.Graph) && !root.Graph.GetListItems(t.Object).Any(i => i.NodeType == GraphNodeType.Literal)
+                        from t in Subject.Graph.GetTriplesWithSubject(Subject)
+                        where t.Object.IsListRoot(Subject.Graph) && !Subject.Graph.GetListItems(t.Object).Any(i => i.NodeType == GraphNodeType.Literal)
                         select t);
 
                     predicateTriples = new Queue<Triple>(
-                        from t in root.Graph.GetTriplesWithSubject(root)
-                        where !t.Object.IsListRoot(root.Graph) || root.Graph.GetListItems(t.Object).Any(i => i.NodeType == GraphNodeType.Literal)
+                        from t in Subject.Graph.GetTriplesWithSubject(Subject)
+                        where !t.Object.IsListRoot(Subject.Graph) || Subject.Graph.GetListItems(t.Object).Any(i => i.NodeType == GraphNodeType.Literal)
                         select t);
 
                     if (collectionTriples.Any())
@@ -487,7 +498,12 @@
             switch (state)
             {
                 case ReaderState.RDF:
-                    prefixes = new Queue<string>(root.Graph.NamespaceMap.Prefixes);
+                    if (!subjects.Any())
+                    {
+                        return false;
+                    }
+
+                    prefixes = new Queue<string>(Subject.Graph.NamespaceMap.Prefixes);
 
                     if (prefixes.Any())
                     {
@@ -504,9 +520,9 @@
                     return ListItem.MoveToFirstAttribute();
 
                 case ReaderState.Subject:
-                    if (root.NodeType == GraphNodeType.Blank)
+                    if (Subject.NodeType == GraphNodeType.Blank)
                     {
-                        if (root.Graph.GetTriplesWithObject(root).Skip(1).Any())
+                        if (Subject.Graph.GetTriplesWithObject(Subject).Skip(1).Any())
                         {
                             return TransitionTo(ReaderState.NodeId);
                         }
