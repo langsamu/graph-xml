@@ -65,7 +65,6 @@ namespace UnitTestProject1
             AreEqual(g, Load(g));
         }
 
-
         [TestMethod]
         public void Multiple()
         {

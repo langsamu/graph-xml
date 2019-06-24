@@ -388,6 +388,11 @@
                     {
                         listItems = new Queue<Reader>();
 
+                        foreach (var item in Subject.Graph.GetListAsTriples(Subject).Select(t => t.Subject).Distinct())
+                        {
+                            seen.Add(item);
+                        }
+
                         foreach (var item in Subject.Graph.GetListItems(Subject))
                         {
                             var listReader = new Reader(item, false, seen);
@@ -414,8 +419,6 @@
                     return listItems.Any();
 
                 case ReaderState.Subject:
-                    // TODO: must output node id if subject is predicate that's used elsewhere (see e.g. rdfms-syntax-incomplete-test-001 in test-suite)
-
                     if (!seen.Add(Subject) || !Subject.Graph.GetTriplesWithSubject(Subject).Any())
                     {
                         goto case ReaderState.EndSubject;
@@ -484,6 +487,16 @@
                     return TransitionToIfAny(predicateTriples, ReaderState.Predicate, ReaderState.EndSubject);
 
                 case ReaderState.EndSubject:
+                    do
+                    {
+                        subjects.Dequeue();
+                    } while (subjects.Any() && seen.Contains(Subject));
+
+                    if (subjects.Any())
+                    {
+                        return TransitionTo(ReaderState.Subject);
+                    }
+
                     return false;
 
                 default:
@@ -522,7 +535,7 @@
                 case ReaderState.Subject:
                     if (Subject.NodeType == GraphNodeType.Blank)
                     {
-                        if (Subject.Graph.GetTriplesWithObject(Subject).Skip(1).Any())
+                        if (Subject.Graph.GetTriplesWithObject(Subject).Any())
                         {
                             return TransitionTo(ReaderState.NodeId);
                         }
